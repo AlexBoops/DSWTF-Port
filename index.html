@@ -1,133 +1,420 @@
 <!DOCTYPE html>
 <html lang="en-us">
-  <head>
-    <meta charset="utf-8">
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Unity Web Player | DontSleepWithTheFishes</title>
-    <link rel="shortcut icon" href="TemplateData/favicon.ico">
-    <link rel="stylesheet" href="TemplateData/style.css">
-  </head>
-  <body>
-    <div id="unity-container" class="unity-desktop">
-      <canvas id="unity-canvas" width=960 height=600 tabindex="-1"></canvas>
-      <div id="unity-loading-bar">
-        <div id="unity-logo"></div>
-        <div id="unity-progress-bar-empty">
-          <div id="unity-progress-bar-full"></div>
-        </div>
-      </div>
-      <div id="unity-warning"> </div>
-      <div id="unity-footer">
-        <div id="unity-logo-title-footer"></div>
-        <div id="unity-fullscreen-button"></div>
-        <div id="unity-build-title">DontSleepWithTheFishes</div>
-      </div>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Don't Sleep With the Fishes</title>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      color: #fff;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    #unity-canvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      border: 0;
+      outline: none;
+      background: #000;
+      touch-action: none;
+      cursor: none !important;
+    }
+
+    #custom-cursor-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 32px;
+      height: 32px;
+      pointer-events: none;
+      z-index: 9999;
+      background-image: url('TemplateData/cursor_pointer.png');
+      background-size: contain;
+      background-repeat: no-repeat;
+      display: block;
+    }
+
+    #loading-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      background: #000;
+      transition: opacity .35s ease;
+    }
+
+    #loading-screen.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #game-title {
+      margin-bottom: 22px;
+      font-size: clamp(16px, 3vw, 23px);
+      font-weight: 700;
+      letter-spacing: 4px;
+      text-align: center;
+    }
+
+    #progress-container {
+      width: min(340px, 75vw);
+      height: 5px;
+      background: #252525;
+      overflow: hidden;
+      margin-bottom: 15px;
+    }
+
+    #progress-bar {
+      width: 0%;
+      height: 100%;
+      background: #fff;
+      transition: width .15s linear;
+    }
+
+    #loading-status {
+      width: min(340px, 75vw);
+      min-height: 18px;
+      color: #aaa;
+      font-size: 12px;
+      letter-spacing: 1px;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+
+    #loading-percent {
+      margin-top: 9px;
+      color: #666;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #loading-error {
+      display: none;
+      width: min(500px, 85vw);
+      margin-top: 20px;
+      color: #ff6666;
+      font-size: 12px;
+      line-height: 1.6;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="unity-canvas" tabindex="0"></canvas>
+  <div id="custom-cursor-overlay"></div>
+
+  <div id="loading-screen">
+    <div id="game-title">Don't Sleep With the Fishes</div>
+
+    <div id="progress-container">
+      <div id="progress-bar"></div>
     </div>
-    <script>
-      var canvas = document.querySelector("#unity-canvas");
 
-      // Shows a temporary message banner/ribbon for a few seconds, or
-      // a permanent error message on top of the canvas if type=='error'.
-      // If type=='warning', a yellow highlight color is used.
-      // Modify or remove this function to customize the visually presented
-      // way that non-critical warnings and error messages are presented to the
-      // user.
-      function unityShowBanner(msg, type) {
-        var warningBanner = document.querySelector("#unity-warning");
-        function updateBannerVisibility() {
-          warningBanner.style.display = warningBanner.children.length ? 'block' : 'none';
+    <div id="loading-status">INITIALIZING...</div>
+    <div id="loading-percent">0%</div>
+    <div id="loading-error"></div>
+  </div>
+
+  <script>
+    (() => {
+      const canvas = document.getElementById("unity-canvas");
+      const cursorOverlay = document.getElementById("custom-cursor-overlay");
+      const loadingScreen = document.getElementById("loading-screen");
+      const progressBar = document.getElementById("progress-bar");
+      const statusText = document.getElementById("loading-status");
+      const percentText = document.getElementById("loading-percent");
+      const errorText = document.getElementById("loading-error");
+
+      // Local GitHub Pages path
+      const localBuildUrl = "Build";
+      const localTemplateUrl = "TemplateData";
+
+      // Fallback jsDelivr CDN route
+      const jsdelivrRepoBase = "https://cdn.jsdelivr.net/gh/AlexBoops/DSWTF-Port@main";
+      const jsdelivrBuildUrl = `${jsdelivrRepoBase}/Build`;
+
+      // Set cursor image with CDN fallback
+      const cursorImg = new Image();
+      cursorImg.onload = () => { cursorOverlay.style.backgroundImage = `url('${localTemplateUrl}/cursor_pointer.png')`; };
+      cursorImg.onerror = () => { cursorOverlay.style.backgroundImage = `url('${jsdelivrRepoBase}/TemplateData/cursor_pointer.png')`; };
+      cursorImg.src = `${localTemplateUrl}/cursor_pointer.png`;
+
+      // 1. IL2CPP Null Function & Exception Suppressor
+      window.addEventListener('unhandledrejection', function(event) {
+        if (event.reason && event.reason.message && 
+           (event.reason.message.includes('null function') || event.reason.message.includes('RuntimeError'))) {
+          event.preventDefault();
+          console.warn('[IL2CPP Bypass] Suppressed WebAssembly exception:', event.reason.message);
         }
-        var div = document.createElement('div');
-        div.innerHTML = msg;
-        warningBanner.appendChild(div);
-        if (type == 'error') div.style = 'background: red; padding: 10px;';
-        else {
-          if (type == 'warning') div.style = 'background: yellow; padding: 10px;';
-          setTimeout(function() {
-            warningBanner.removeChild(div);
-            updateBannerVisibility();
-          }, 5000);
+      });
+
+      (function() {
+        var originalConsoleError = console.error;
+        console.error = function() {
+          var msg = arguments[0] ? arguments[0].toString() : "";
+          if (msg.indexOf("Set Method not found for 'mesh'") !== -1 || msg.indexOf("RuntimeError: null function") !== -1) return;
+          originalConsoleError.apply(console, arguments);
+        };
+      })();
+
+      // 2. Pointer Lock Protector & Cursor Overlay Tracking
+      (function() {
+        let lastLockAttempt = 0;
+        let isUserInitiated = false;
+        let virtualX = window.innerWidth / 2;
+        let virtualY = window.innerHeight / 2;
+
+        const nativeExitLock = document.exitPointerLock;
+        document.exitPointerLock = function() {
+          if (!isUserInitiated) return;
+          return nativeExitLock.apply(document, arguments);
+        };
+
+        window.addEventListener("keydown", function(e) {
+          if (e.key === "Escape" || e.keyCode === 27) {
+            isUserInitiated = true;
+            nativeExitLock.call(document);
+            setTimeout(() => { isUserInitiated = false; }, 100);
+          }
+        });
+
+        function safeRequestLock() {
+          const now = performance.now();
+          if (document.pointerLockElement === canvas) return;
+          if (now - lastLockAttempt < 1200) return;
+
+          lastLockAttempt = now;
+          canvas.focus();
+
+          try {
+            const res = canvas.requestPointerLock();
+            if (res && typeof res.catch === 'function') {
+              res.catch(() => {});
+            }
+          } catch(e) {}
         }
-        updateBannerVisibility();
-      }
 
-      var buildUrl = "Build";
-      var loaderUrl = buildUrl + "/DSWTF-Port.loader.js";
-      var config = {
-        arguments: [],
-        dataUrl: buildUrl + "/DSWTF-Port.data",
-        frameworkUrl: buildUrl + "/DSWTF-Port.framework.js",
-        codeUrl: buildUrl + "/DSWTF-Port.wasm",
-        streamingAssetsUrl: "StreamingAssets",
-        companyName: "DopplerGhost",
-        productName: "DontSleepWithTheFishes",
-        productVersion: "1.1.4",
-        showBanner: unityShowBanner,
-        // errorHandler: function(err, url, line) {
-        //    alert("error " + err + " occurred at line " + line);
-        //    // Return 'true' if you handled this error and don't want Unity
-        //    // to process it further, 'false' otherwise.
-        //    return true;
-        // },
-      };
+        window.addEventListener("click", safeRequestLock, true);
+        canvas.addEventListener("mousedown", safeRequestLock, true);
 
-      // By default, Unity keeps WebGL canvas render target size matched with
-      // the DOM size of the canvas element (scaled by window.devicePixelRatio)
-      // Set this to false if you want to decouple this synchronization from
-      // happening inside the engine, and you would instead like to size up
-      // the canvas DOM size and WebGL render target sizes yourself.
-      // config.matchWebGLToCanvasSize = false;
+        const origAddEventListener = EventTarget.prototype.addEventListener;
+        EventTarget.prototype.addEventListener = function(type, listener, options) {
+          if (type === 'mousemove' && typeof listener === 'function') {
+            const wrappedListener = function(event) {
+              let dx = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+              let dy = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
 
-      // If you would like all file writes inside Unity Application.persistentDataPath
-      // directory to automatically persist so that the contents are remembered when
-      // the user revisits the site the next time, uncomment the following line:
-      // config.autoSyncPersistentDataPath = true;
-      // This autosyncing is currently not the default behavior to avoid regressing
-      // existing user projects that might rely on the earlier manual
-      // JS_FileSystem_Sync() behavior, but in future Unity version, this will be
-      // expected to change.
+              if (Math.abs(dx) > 250 || Math.abs(dy) > 250) {
+                dx = 0;
+                dy = 0;
+              }
 
-      if (/iPhone|iPad|iPod|Android/i.test(navigator.userAgent)) {
-        // Mobile device style: fill the whole browser client area with the game canvas:
+              if (document.pointerLockElement === canvas) {
+                virtualX = Math.max(0, Math.min(window.innerWidth, virtualX + dx));
+                virtualY = Math.max(0, Math.min(window.innerHeight, virtualY + dy));
+              } else {
+                virtualX = event.clientX;
+                virtualY = event.clientY;
+              }
 
-        var meta = document.createElement('meta');
-        meta.name = 'viewport';
-        meta.content = 'width=device-width, height=device-height, initial-scale=1.0, user-scalable=no, shrink-to-fit=yes';
-        document.getElementsByTagName('head')[0].appendChild(meta);
-        document.querySelector("#unity-container").className = "unity-mobile";
-        canvas.className = "unity-mobile";
+              cursorOverlay.style.left = virtualX + 'px';
+              cursorOverlay.style.top = virtualY + 'px';
 
-        // To lower canvas resolution on mobile devices to gain some
-        // performance, uncomment the following line:
-        // config.devicePixelRatio = 1;
+              Object.defineProperty(event, 'movementX', { value: dx, configurable: true });
+              Object.defineProperty(event, 'movementY', { value: dy, configurable: true });
+              Object.defineProperty(event, 'clientX', { value: virtualX, configurable: true });
+              Object.defineProperty(event, 'clientY', { value: virtualY, configurable: true });
+              Object.defineProperty(event, 'screenX', { value: virtualX, configurable: true });
+              Object.defineProperty(event, 'screenY', { value: virtualY, configurable: true });
 
-
-      } else {
-        // Desktop style: Render the game canvas in a window that can be maximized to fullscreen:
-        canvas.style.width = "960px";
-        canvas.style.height = "600px";
-      }
-
-      document.querySelector("#unity-loading-bar").style.display = "block";
-
-      var script = document.createElement("script");
-      script.src = loaderUrl;
-      script.onload = () => {
-        createUnityInstance(canvas, config, (progress) => {
-          document.querySelector("#unity-progress-bar-full").style.width = 100 * progress + "%";
-              }).then((unityInstance) => {
-                document.querySelector("#unity-loading-bar").style.display = "none";
-                document.querySelector("#unity-fullscreen-button").onclick = () => {
-                  unityInstance.SetFullscreen(1);
-                };
-
-              }).catch((message) => {
-                alert(message);
-              });
+              return listener.apply(this, arguments);
             };
+            return origAddEventListener.call(this, type, wrappedListener, options);
+          }
+          return origAddEventListener.call(this, type, listener, options);
+        };
 
-      document.body.appendChild(script);
+        document.addEventListener('pointerlockchange', function() {
+          const locked = document.pointerLockElement === canvas;
+          if (locked) {
+            virtualX = window.innerWidth / 2;
+            virtualY = window.innerHeight / 2;
+          }
+        });
+      })();
 
-    </script>
-  </body>
+      function setLoading(percent, message) {
+        const value = Math.max(0, Math.min(100, percent));
+        progressBar.style.width = value + "%";
+        percentText.textContent = Math.round(value) + "%";
+        statusText.textContent = message;
+      }
+
+      function showError(error) {
+        console.error("[Unity] Failed to load:", error);
+        statusText.textContent = "LOADING FAILED";
+        errorText.style.display = "block";
+        errorText.textContent = (error && error.message ? error.message : String(error));
+      }
+
+      function resizeCanvas() {
+        canvas.style.width = window.innerWidth + "px";
+        canvas.style.height = window.innerHeight + "px";
+      }
+
+      window.addEventListener("resize", resizeCanvas);
+      resizeCanvas();
+
+      // GitHub Pages Primary Fetcher with jsDelivr Fallback & 5-second Retry
+      async function fetchChunkWithFallback(partFileName, retries = 5, delayMs = 5000) {
+        // Try local GitHub Pages path first
+        let res = await fetch(`${localBuildUrl}/${partFileName}`).catch(() => null);
+
+        if (res && res.ok) {
+          return await res.arrayBuffer();
+        }
+
+        // Retry via jsDelivr CDN if local fetch fails
+        for (let attempt = 1; attempt <= retries; attempt++) {
+          try {
+            console.warn(`[AssetLoader] Fetching ${partFileName} via jsDelivr (Attempt ${attempt}/${retries})...`);
+            res = await fetch(`${jsdelivrBuildUrl}/${partFileName}`);
+            if (res.ok) {
+              return await res.arrayBuffer();
+            }
+          } catch (err) {
+            console.warn(`[AssetLoader] Network error for ${partFileName} on jsDelivr.`);
+          }
+
+          if (attempt < retries) {
+            setLoading(
+              parseFloat(progressBar.style.width) || 0,
+              `RETRYING IN 5s (ATTEMPT ${attempt}/${retries})...`
+            );
+            await new Promise(r => setTimeout(r, delayMs));
+          }
+        }
+
+        throw new Error(`Failed to load ${partFileName} from GitHub Pages and jsDelivr after ${retries} attempts.`);
+      }
+
+      async function assembleSplitFile(baseName, totalParts, mimeType, startPct, endPct) {
+        const chunks = [];
+        let totalBytes = 0;
+
+        for (let i = 1; i <= totalParts; i++) {
+          const partNum = String(i).padStart(4, '0');
+          const partFileName = `${baseName}.part${partNum}`;
+
+          const currentPct = startPct + ((i - 1) / totalParts) * (endPct - startPct);
+          setLoading(currentPct, `DOWNLOADING ${baseName} (${i}/${totalParts})...`);
+
+          const buf = await fetchChunkWithFallback(partFileName);
+          chunks.push(buf);
+          totalBytes += buf.byteLength;
+        }
+
+        const combined = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const chunk of chunks) {
+          combined.set(new Uint8Array(chunk), offset);
+          offset += chunk.byteLength;
+        }
+
+        return URL.createObjectURL(new Blob([combined], { type: mimeType }));
+      }
+
+      async function startUnity() {
+        try {
+          setLoading(1, "INITIALIZING...");
+
+          const dataBlobUrl = await assembleSplitFile("DSWTF-Port.data", 7, "application/octet-stream", 2, 35);
+          const wasmBlobUrl = await assembleSplitFile("DSWTF-Port.wasm", 3, "application/wasm", 36, 50);
+
+          setLoading(51, "LOADING ENGINE LOADER...");
+
+          await new Promise((resolve, reject) => {
+            const script = document.createElement("script");
+            script.src = `${localBuildUrl}/DSWTF-Port.loader.js`;
+            script.crossOrigin = "anonymous";
+            script.onload = resolve;
+            script.onerror = () => {
+              // Retry with jsDelivr loader if local script fails
+              const fallbackScript = document.createElement("script");
+              fallbackScript.src = `${jsdelivrBuildUrl}/DSWTF-Port.loader.js`;
+              fallbackScript.crossOrigin = "anonymous";
+              fallbackScript.onload = resolve;
+              fallbackScript.onerror = () => reject(new Error("Failed to load DSWTF-Port.loader.js"));
+              document.body.appendChild(fallbackScript);
+            };
+            document.body.appendChild(script);
+          });
+
+          const config = {
+            dataUrl: dataBlobUrl,
+            frameworkUrl: `${localBuildUrl}/DSWTF-Port.framework.js`,
+            codeUrl: wasmBlobUrl,
+            streamingAssetsUrl: "StreamingAssets",
+            companyName: "DopplerGhost",
+            productName: "DontSleepWithTheFishes",
+            productVersion: "1.1.4",
+            matchWebGLToCanvasSize: true,
+            autoSyncPersistentDataPath: true,
+            devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2)
+          };
+
+          const unityInstance = await createUnityInstance(
+            canvas,
+            config,
+            progress => {
+              const percent = 50 + progress * 50;
+              setLoading(
+                percent,
+                progress < 1
+                  ? "LAUNCHING ENGINE... " + Math.round(progress * 100) + "%"
+                  : "STARTING GAME..."
+              );
+            }
+          );
+
+          window.unityInstance = unityInstance;
+
+          setLoading(100, "READY");
+
+          setTimeout(() => {
+            loadingScreen.classList.add("hidden");
+            setTimeout(() => {
+              loadingScreen.style.display = "none";
+              canvas.focus();
+            }, 400);
+          }, 250);
+
+        } catch (error) {
+          showError(error);
+        }
+      }
+
+      startUnity();
+    })();
+  </script>
+</body>
 </html>
