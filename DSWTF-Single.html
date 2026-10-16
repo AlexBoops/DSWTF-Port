@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+  <title>Don't Sleep With the Fishes</title>
+
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #000;
+      color: #fff;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    #unity-canvas {
+      position: fixed;
+      inset: 0;
+      display: block;
+      width: 100vw;
+      height: 100vh;
+      border: 0;
+      outline: none;
+      background: #000;
+      touch-action: none;
+      cursor: none !important;
+    }
+
+    #custom-cursor-overlay {
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 32px;
+      height: 32px;
+      pointer-events: none;
+      z-index: 9999;
+      background-image: url('https://cdn.jsdelivr.net/gh/AlexBoops/DSWTF-Port@main/TemplateData/cursor_pointer.png');
+      background-size: contain;
+      background-repeat: no-repeat;
+      display: block;
+    }
+
+    #loading-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 10;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-direction: column;
+      background: #000;
+      transition: opacity .35s ease;
+    }
+
+    #loading-screen.hidden {
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    #game-title {
+      margin-bottom: 22px;
+      font-size: clamp(16px, 3vw, 23px);
+      font-weight: 700;
+      letter-spacing: 4px;
+      text-align: center;
+    }
+
+    #progress-container {
+      width: min(340px, 75vw);
+      height: 5px;
+      background: #252525;
+      overflow: hidden;
+      margin-bottom: 15px;
+    }
+
+    #progress-bar {
+      width: 0%;
+      height: 100%;
+      background: #fff;
+      transition: width .15s linear;
+    }
+
+    #loading-status {
+      width: min(340px, 75vw);
+      min-height: 18px;
+      color: #aaa;
+      font-size: 12px;
+      letter-spacing: 1px;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+
+    #loading-percent {
+      margin-top: 9px;
+      color: #666;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #loading-error {
+      display: none;
+      width: min(500px, 85vw);
+      margin-top: 20px;
+      color: #ff6666;
+      font-size: 12px;
+      line-height: 1.6;
+      text-align: center;
+      overflow-wrap: anywhere;
+    }
+  </style>
+</head>
+
+<body>
+  <canvas id="unity-canvas" tabindex="0"></canvas>
+  <div id="custom-cursor-overlay"></div>
+
+  <div id="loading-screen">
+    <div id="game-title">Don't Sleep With the Fishes</div>
+
+    <div id="progress-container">
+      <div id="progress-bar"></div>
+    </div>
+
+    <div id="loading-status">INITIALIZING...</div>
+    <div id="loading-percent">0%</div>
+    <div id="loading-error"></div>
+  </div>
+
+  <script>
+    (() => {
+      const canvas = document.getElementById("unity-canvas");
+      const cursorOverlay = document.getElementById("custom-cursor-overlay");
+      const loadingScreen = document.getElementById("loading-screen");
+      const progressBar = document.getElementById("progress-bar");
+      const statusText = document.getElementById("loading-status");
+      const percentText = document.getElementById("loading-percent");
+      const errorText = document.getElementById("loading-error");
+
+      const jsdelivrRepoBase = "https://cdn.jsdelivr.net/gh/AlexBoops/DSWTF-Port@main";
+      const jsdelivrBuildUrl = `${jsdelivrRepoBase}/Build`;
+
+      window.addEventListener('unhandledrejection', function(event) {
+        if (event.reason && event.reason.message && 
+           (event.reason.message.includes('null function') || event.reason.message.includes('RuntimeError'))) {
+          event.preventDefault();
+          console.warn('[IL2CPP Bypass] Suppressed WebAssembly exception:', event.reason.message);
+        }
+      });
+
+      (function() {
+        var originalConsoleError = console.error;
+        console.error = function() {
+          var msg = arguments[0] ? arguments[0].toString() : "";
+          if (msg.indexOf("Set Method not found for 'mesh'") !== -1 || msg.indexOf("RuntimeError: null function") !== -1) return;
+          originalConsoleError.apply(console, arguments);
+        };
+      })();
+
+      (function() {
+        let lastLockAttempt = 0;
+        let isUserInitiated = false;
+        let virtualX = window.innerWidth / 2;
+        let virtualY = window.innerHeight / 2;
+
+        const nativeExitLock = document.exitPointerLock;
+        document.exitPointerLock = function() {
+          if (!isUserInitiated) return;
+          return nativeExitLock.apply(document, arguments);
+        };
+
+        window.addEventListener("keydown", function(e) {
+          if (e.key === "Escape" || e.keyCode === 27) {
+            isUserInitiated = true;
+            nativeExitLock.call(document);
+            setTimeout(() => { isUserInitiated = false; }, 100);
+          }
+        });
+
+        function safeRequestLock() {
+          const now = performance.now();
+          if (document.pointerLockElement === canvas) return;
+          if (now - lastLockAttempt < 1200) return;
+
+          lastLockAttempt = now;
+          canvas.focus();
+
+          try {
+            const res = canvas.requestPointerLock();
+            if (res && typeof res.catch === 'function') {
+              res.catch(() => {});
+            }
+          } catch(e) {}
+        }
+
+        window.addEventListener("click", safeRequestLock, true);
+        canvas.addEventListener("mousedown", safeRequestLock, true);
+
+        const origAddEventListener = EventTarget.prototype.addEventListener;
+        EventTarget.prototype.addEventListener = function(type, listener, options) {
+          if (type === 'mousemove' && typeof listener === 'function') {
+            const wrappedListener = function(event) {
+              let dx = event.movementX || event.mozMovementX || event.webkitMovementX || 0;
+              let dy = event.movementY || event.mozMovementY || event.webkitMovementY || 0;
+
+              if (Math.abs(dx) > 250 || Math.abs(dy) > 250) {
+                dx = 0;
+                dy = 0;
+              }
+
+              if (document.pointerLockElement === canvas) {
+                virtualX = Math.max(0, Math.min(window.innerWidth, virtualX + dx));
+                virtualY = Math.max(0, Math.min(window.innerHeight, virtualY + dy));
+              } else {
+                virtualX = event.clientX;
+                virtualY = event.clientY;
+              }
+
+              cursorOverlay.style.left = virtualX + 'px';
+              cursorOverlay.style.top = virtualY + 'px';
+
+              Object.defineProperty(event, 'movementX', { value: dx, configurable: true });
+              Object.defineProperty(event, 'movementY', { value: dy, configurable: true });
+              Object.defineProperty(event, 'clientX', { value: virtualX, configurable: true });
+              Object.defineProperty(event, 'clientY', { value: virtualY, configurable: true });
+              Object.defineProperty(event, 'screenX', { value: virtualX, configurable: true });
+              Object.defineProperty(event, 'screenY', { value: virtualY, configurable: true });
+
+              return listener.apply(this, arguments);
+            };
+            return origAddEventListener.call(this, type, wrappedListener, options);
+          }
+          return origAddEventListener.call(this, type, listener, options);
+        };
+
+        document.addEventListener('pointerlockchange', function() {
+          const locked = document.pointerLockElement === canvas;
+          if (locked) {
+            virtualX = window.innerWidth / 2;
+            virtualY = window.innerHeight / 2;
+          }
+        });
+      })();
+
+      function setLoading(percent, message) {
+        const value = Math.max(0, Math.min(100, percent));
+        progressBar.style.width = value + "%";
+        percentText.textContent = Math.round(value) + "%";
+        statusText.textContent = message;
+      }
+
+      function showError(error) {
+        console.error("[Unity] Failed to load:", error);
+        statusText.textContent = "LOADING FAILED";
+        errorText.style.display = "block";
+        errorText.textContent = (error && error.message ? error.message : String(error));
+      }
+
+      function resizeCanvas() {
+        canvas.style.width = window.innerWidth + "px";
+        canvas.style.height = window.innerHeight + "px";
+      }
+
+      window.addEventListener("resize", resizeCanvas);
+      resizeCanvas();
+
+      // Retry mechanism with explicit 5-second delay (5000ms)
+      async function fetchChunkWithRetry(chunkUrl, retries = 8, delayMs = 5000) {
+        for (let attempt = 1; attempt <= retries; attempt++) {
+          try {
+            const res = await fetch(chunkUrl);
+            if (res.ok) {
+              return await res.arrayBuffer();
+            }
+            console.warn(`[jsDelivr Retry ${attempt}/${retries}] HTTP ${res.status} for ${chunkUrl}. Retrying in 5 seconds...`);
+          } catch (err) {
+            console.warn(`[jsDelivr Retry ${attempt}/${retries}] Network error for ${chunkUrl}. Retrying in 5 seconds...`);
+          }
+
+          if (attempt < retries) {
+            setLoading(
+              parseFloat(progressBar.style.width) || 0,
+              `RETRYING IN 5s (ATTEMPT ${attempt}/${retries})...`
+            );
+            await new Promise(r => setTimeout(r, delayMs));
+          }
+        }
+        throw new Error(`Failed to load ${chunkUrl} after ${retries} attempts.`);
+      }
+
+      async function assembleSplitFile(baseName, totalParts, mimeType, startPct, endPct) {
+        const chunks = [];
+        let totalBytes = 0;
+
+        for (let i = 1; i <= totalParts; i++) {
+          const partNum = String(i).padStart(4, '0');
+          const chunkUrl = `${jsdelivrBuildUrl}/${baseName}.part${partNum}`;
+
+          const currentPct = startPct + ((i - 1) / totalParts) * (endPct - startPct);
+          setLoading(currentPct, `DOWNLOADING ${baseName} (${i}/${totalParts})...`);
+
+          const buf = await fetchChunkWithRetry(chunkUrl);
+          chunks.push(buf);
+          totalBytes += buf.byteLength;
+        }
+
+        const combined = new Uint8Array(totalBytes);
+        let offset = 0;
+        for (const chunk of chunks) {
+          combined.set(new Uint8Array(chunk), offset);
+          offset += chunk.byteLength;
+        }
+
+        return URL.createObjectURL(new Blob([combined], { type: mimeType }));
+      }
+
+      async function startUnity() {
+        try {
+          setLoading(1, "INITIALIZING...");
+
+          const dataBlobUrl = await assembleSplitFile("DSWTF-Port.data", 7, "application/octet-stream", 2, 35);
+          const wasmBlobUrl = await assembleSplitFile("DSWTF-Port.wasm", 3, "application/wasm", 36, 50);
+
+          setLoading(51, "LOADING ENGINE LOADER...");
+
+          await new Promise((resolve, reject) => {
+            const script = document.createElement("script");
+            script.src = `${jsdelivrBuildUrl}/DSWTF-Port.loader.js`;
+            script.crossOrigin = "anonymous";
+            script.onload = resolve;
+            script.onerror = () => reject(new Error(`Failed to load engine loader from ${jsdelivrBuildUrl}/DSWTF-Port.loader.js`));
+            document.body.appendChild(script);
+          });
+
+          const config = {
+            dataUrl: dataBlobUrl,
+            frameworkUrl: `${jsdelivrBuildUrl}/DSWTF-Port.framework.js`,
+            codeUrl: wasmBlobUrl,
+            streamingAssetsUrl: `${jsdelivrRepoBase}/StreamingAssets`,
+            companyName: "DopplerGhost",
+            productName: "DontSleepWithTheFishes",
+            productVersion: "1.1.4",
+            matchWebGLToCanvasSize: true,
+            autoSyncPersistentDataPath: true,
+            devicePixelRatio: Math.min(window.devicePixelRatio || 1, 2)
+          };
+
+          const unityInstance = await createUnityInstance(
+            canvas,
+            config,
+            progress => {
+              const percent = 50 + progress * 50;
+              setLoading(
+                percent,
+                progress < 1
+                  ? "LAUNCHING ENGINE... " + Math.round(progress * 100) + "%"
+                  : "STARTING GAME..."
+              );
+            }
+          );
+
+          window.unityInstance = unityInstance;
+
+          setLoading(100, "READY");
+
+          setTimeout(() => {
+            loadingScreen.classList.add("hidden");
+            setTimeout(() => {
+              loadingScreen.style.display = "none";
+              canvas.focus();
+            }, 400);
+          }, 250);
+
+        } catch (error) {
+          showError(error);
+        }
+      }
+
+      startUnity();
+    })();
+  </script>
+</body>
+</html>
